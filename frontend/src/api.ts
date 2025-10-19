@@ -1,7 +1,6 @@
 export type Project = {
   id: number;
   name: string;
-  description: string | null;
   created_at: string;
 };
 
@@ -10,7 +9,9 @@ const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, ''
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
-    const message = typeof errorBody.error === 'string' ? errorBody.error : 'Request failed';
+    const message = typeof (errorBody as { error?: unknown }).error === 'string'
+      ? (errorBody as { error: string }).error
+      : 'Request failed';
     throw new Error(message);
   }
   return response.json() as Promise<T>;
@@ -23,7 +24,7 @@ export async function listProjects(): Promise<Project[]> {
   return handleResponse<Project[]>(response);
 }
 
-export async function createProject(payload: { name: string; description?: string }): Promise<Project> {
+export async function createProject(payload: { name: string }): Promise<Project> {
   const response = await fetch(`${BASE_URL}/projects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -32,10 +33,7 @@ export async function createProject(payload: { name: string; description?: strin
   return handleResponse<Project>(response);
 }
 
-export async function updateProject(
-  id: number,
-  payload: { name?: string; description?: string | null }
-): Promise<Project> {
+export async function updateProject(id: number, payload: { name: string }): Promise<Project> {
   const response = await fetch(`${BASE_URL}/projects/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import {
-  createProject,
-  deleteProject,
-  listProjects,
-  updateProject,
-  type Project
-} from '../api';
+import { createProject, deleteProject, listProjects, updateProject, type Project } from '../api';
 
 const initialFormState = {
-  name: '',
-  description: ''
+  name: ''
 };
 
 function ProjectsPage() {
@@ -49,16 +42,10 @@ function ProjectsPage() {
       setError(null);
       try {
         if (editingId) {
-          const updated = await updateProject(editingId, {
-            name: form.name,
-            description: form.description.trim() === '' ? null : form.description
-          });
+          const updated = await updateProject(editingId, { name: form.name });
           setProjects((prev) => prev.map((project) => (project.id === updated.id ? updated : project)));
         } else {
-          const created = await createProject({
-            name: form.name,
-            description: form.description.trim() === '' ? undefined : form.description
-          });
+          const created = await createProject({ name: form.name });
           setProjects((prev) => [created, ...prev]);
         }
         resetForm();
@@ -68,12 +55,12 @@ function ProjectsPage() {
         setSubmitting(false);
       }
     },
-    [editingId, form.description, form.name, resetForm]
+    [editingId, form.name, resetForm]
   );
 
   const handleEdit = useCallback((project: Project) => {
     setEditingId(project.id);
-    setForm({ name: project.name, description: project.description ?? '' });
+    setForm({ name: project.name });
   }, []);
 
   const handleDelete = useCallback(
@@ -126,18 +113,6 @@ function ProjectsPage() {
             />
           </label>
 
-          <label className="form__field">
-            <span>Description</span>
-            <textarea
-              name="description"
-              value={form.description}
-              onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
-              placeholder="What is this project about?"
-              rows={3}
-              disabled={submitting}
-            />
-          </label>
-
           <div className="form__actions">
             <button type="submit" disabled={submitting}>
               {editingId ? 'Save changes' : 'Create project'}
@@ -163,10 +138,7 @@ function ProjectsPage() {
             <li key={project.id} className="project-list__item">
               <div>
                 <h3>{project.name}</h3>
-                {project.description && <p>{project.description}</p>}
-                <span className="project-list__meta">
-                  Created {new Date(project.created_at).toLocaleString()}
-                </span>
+                <span className="project-list__meta">Created {new Date(project.created_at).toLocaleString()}</span>
               </div>
               <div className="project-list__actions">
                 <button type="button" onClick={() => handleEdit(project)}>

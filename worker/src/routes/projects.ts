@@ -1,107 +1,47 @@
 import { Hono } from 'hono';
-import type { Context } from 'hono';
 import type { Env, ProjectRecord } from '../types';
 
 const projects = new Hono<Env>();
 
-type SupabaseConfig = {
-  baseUrl: string;
-  apiKey: string;
-};
-
-type ProjectContext = Context<Env>;
-
-const getSupabaseConfig = (env: Env['Bindings']): SupabaseConfig | null => {
-  const baseUrl = env.SUPABASE_URL?.trim();
-  const apiKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-
-  if (!baseUrl || !apiKey) {
-    return null;
-  }
+const normalizeProject = (row: ProjectRecord | Record<string, unknown>): ProjectRecord => {
+  const record = row as Record<string, unknown>;
+  const createdAtValue = record.created_at;
+  const createdAt = typeof createdAtValue === 'string' ? createdAtValue : new Date().toISOString();
 
   return {
-    baseUrl: baseUrl.replace(/\/$/, ''),
-    apiKey
+    id: Number(record.id ?? 0),
+    name: String(record.name ?? ''),
+    created_at: createdAt
   };
 };
 
-const supabaseFetch = (config: SupabaseConfig, path: string, init?: RequestInit) => {
-  const url = `${config.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
-  const headers = new Headers(init?.headers ?? {});
+const fetchProjectById = async (env: Env['Bindings'], id: number) => {
+  const { results } = await env.DB.prepare(
+    'SELECT id, name, created_at FROM projects WHERE id = ?'
+  )
+    .bind(id)
+    .all<ProjectRecord>();
 
-  if (!headers.has('apikey')) {
-    headers.set('apikey', config.apiKey);
-  }
-  if (!headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${config.apiKey}`);
-  }
-  if (!headers.has('Accept')) {
-    headers.set('Accept', 'application/json');
+  if (!results || results.length === 0) {
+    return null;
   }
 
-  return fetch(url, {
-    ...init,
-    headers
-  });
-};
-
-const respondWithSupabaseError = async (c: ProjectContext, response: Response) => {
-  const status = response.status >= 400 ? response.status : 502;
-  const rawBody = await response.text();
-  let message = 'Supabase request failed';
-
-  if (rawBody) {
-    try {
-      const parsed = JSON.parse(rawBody);
-      if (typeof parsed === 'string') {
-        message = parsed;
-      } else if (parsed && typeof parsed === 'object') {
-        message =
-          (parsed.message && String(parsed.message)) ||
-          (parsed.error && String(parsed.error)) ||
-          (parsed.hint && String(parsed.hint)) ||
-          rawBody;
-      }
-    } catch {
-      message = rawBody;
-    }
-  }
-
-  console.error('Supabase responded with an error', response.status, message);
-  return c.json({ error: message }, status);
-};
-
-const ensureSupabase = (c: ProjectContext): SupabaseConfig | Response => {
-  const config = getSupabaseConfig(c.env);
-  if (!config) {
-    return c.json({ error: 'Supabase not configured' }, 500);
-  }
-  return config;
+  return normalizeProject(results[0]);
 };
 
 projects.get('/', async (c) => {
-  const config = ensureSupabase(c);
-  if (config instanceof Response) {
-    return config;
-  }
-
-  let response: Response;
   try {
-    response = await supabaseFetch(
-      config,
-      '/projects?select=id,name,description,created_at&order=created_at.desc'
-    );
+    const { results } = await c.env.DB.prepare(
+      'SELECT id, name, created_at FROM projects ORDER BY created_at DESC'
+    ).all<ProjectRecord>();
+
+    const items = (results ?? []).map((row) => normalizeProject(row));
+
+    return c.json(items);
   } catch (error) {
-    console.error('Failed to query Supabase projects', error);
-    return c.json({ error: 'Failed to load projects' }, 502);
+    console.error('Failed to list projects', error);
+    return c.json({ error: 'Failed to load projects' }, 500);
   }
-
-  if (!response.ok) {
-    return respondWithSupabaseError(c, response);
-  }
-
-  const records = (await response.json()) as ProjectRecord[];
-  return c.json(records ?? []);
 });
 
 projects.get('/:id', async (c) => {
@@ -110,82 +50,49 @@ projects.get('/:id', async (c) => {
     return c.json({ error: 'Invalid project id' }, 400);
   }
 
-  const config = ensureSupabase(c);
-  if (config instanceof Response) {
-    return config;
-  }
-
-  let response: Response;
   try {
-    response = await supabaseFetch(
-      config,
-      `/projects?select=id,name,description,created_at&id=eq.${encodeURIComponent(id)}&limit=1`
-    );
+    const project = await fetchProjectById(c.env, id);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+    return c.json(project);
   } catch (error) {
-    console.error('Failed to retrieve project from Supabase', error);
-    return c.json({ error: 'Failed to load project' }, 502);
+    console.error('Failed to load project', error);
+    return c.json({ error: 'Failed to load project' }, 500);
   }
-
-  if (!response.ok) {
-    return respondWithSupabaseError(c, response);
-  }
-
-  const records = (await response.json()) as ProjectRecord[];
-  if (!records || records.length === 0) {
-    return c.json({ error: 'Project not found' }, 404);
-  }
-
-  return c.json(records[0]);
 });
 
 projects.post('/', async (c) => {
-  const body = await c.req.json<{ name?: string; description?: string | null }>().catch(() => null);
+  const body = await c.req.json<{ name?: string }>().catch(() => null);
   if (!body || typeof body.name !== 'string' || body.name.trim().length === 0) {
     return c.json({ error: 'Name is required' }, 400);
   }
 
-  const config = ensureSupabase(c);
-  if (config instanceof Response) {
-    return config;
-  }
+  const name = body.name.trim();
+  const createdAt = new Date().toISOString();
 
-  const payload: Record<string, unknown> = {
-    name: body.name.trim(),
-    created_at: new Date().toISOString()
-  };
-
-  if (typeof body.description === 'string') {
-    payload.description = body.description.trim();
-  } else if (body.description === null) {
-    payload.description = null;
-  }
-
-  let response: Response;
   try {
-    response = await supabaseFetch(config, '/projects?select=id,name,description,created_at', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Prefer: 'return=representation'
-      },
-      body: JSON.stringify(payload)
-    });
+    const result = await c.env.DB.prepare(
+      'INSERT INTO projects (name, created_at) VALUES (?, ?)' 
+    )
+      .bind(name, createdAt)
+      .run();
+
+    if (!result.success || result.meta?.last_row_id == null) {
+      console.error('Failed to insert project', result);
+      return c.json({ error: 'Failed to create project' }, 500);
+    }
+
+    const project = await fetchProjectById(c.env, Number(result.meta.last_row_id));
+    if (!project) {
+      return c.json({ error: 'Failed to load created project' }, 500);
+    }
+
+    return c.json(project, 201);
   } catch (error) {
-    console.error('Failed to create project in Supabase', error);
-    return c.json({ error: 'Failed to create project' }, 502);
+    console.error('Failed to create project', error);
+    return c.json({ error: 'Failed to create project' }, 500);
   }
-
-  if (!response.ok) {
-    return respondWithSupabaseError(c, response);
-  }
-
-  const records = (await response.json()) as ProjectRecord[];
-  const project = records?.[0];
-  if (!project) {
-    return c.json({ error: 'Failed to load created project' }, 500);
-  }
-
-  return c.json(project, 201);
 });
 
 projects.patch('/:id', async (c) => {
@@ -194,65 +101,40 @@ projects.patch('/:id', async (c) => {
     return c.json({ error: 'Invalid project id' }, 400);
   }
 
-  const body = await c.req.json<{ name?: string; description?: string | null }>().catch(() => null);
-  if (!body) {
-    return c.json({ error: 'Invalid payload' }, 400);
+  const body = await c.req.json<{ name?: string }>().catch(() => null);
+  if (!body || typeof body.name !== 'string') {
+    return c.json({ error: 'Name is required' }, 400);
   }
 
-  const updates: Record<string, unknown> = {};
-
-  if (typeof body.name === 'string') {
-    const trimmed = body.name.trim();
-    if (trimmed.length === 0) {
-      return c.json({ error: 'Name cannot be empty' }, 400);
-    }
-    updates.name = trimmed;
+  const name = body.name.trim();
+  if (name.length === 0) {
+    return c.json({ error: 'Name cannot be empty' }, 400);
   }
 
-  if (typeof body.description === 'string') {
-    updates.description = body.description.trim();
-  } else if (body.description === null) {
-    updates.description = null;
-  }
-
-  if (Object.keys(updates).length === 0) {
-    return c.json({ error: 'No fields provided to update' }, 400);
-  }
-
-  const config = ensureSupabase(c);
-  if (config instanceof Response) {
-    return config;
-  }
-
-  let response: Response;
   try {
-    response = await supabaseFetch(
-      config,
-      `/projects?id=eq.${encodeURIComponent(id)}&select=id,name,description,created_at`,
-      {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Prefer: 'return=representation'
-        },
-        body: JSON.stringify(updates)
-      }
-    );
+    const result = await c.env.DB.prepare('UPDATE projects SET name = ? WHERE id = ?')
+      .bind(name, id)
+      .run();
+
+    if (!result.success) {
+      console.error('Failed to update project', result);
+      return c.json({ error: 'Failed to update project' }, 500);
+    }
+
+    if ((result.meta?.changes ?? 0) === 0) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    const project = await fetchProjectById(c.env, id);
+    if (!project) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    return c.json(project);
   } catch (error) {
-    console.error('Failed to update project in Supabase', error);
-    return c.json({ error: 'Failed to update project' }, 502);
+    console.error('Failed to update project', error);
+    return c.json({ error: 'Failed to update project' }, 500);
   }
-
-  if (!response.ok) {
-    return respondWithSupabaseError(c, response);
-  }
-
-  const records = (await response.json()) as ProjectRecord[];
-  if (!records || records.length === 0) {
-    return c.json({ error: 'Project not found' }, 404);
-  }
-
-  return c.json(records[0]);
 });
 
 projects.delete('/:id', async (c) => {
@@ -261,38 +143,25 @@ projects.delete('/:id', async (c) => {
     return c.json({ error: 'Invalid project id' }, 400);
   }
 
-  const config = ensureSupabase(c);
-  if (config instanceof Response) {
-    return config;
-  }
-
-  let response: Response;
   try {
-    response = await supabaseFetch(
-      config,
-      `/projects?id=eq.${encodeURIComponent(id)}&select=id`,
-      {
-        method: 'DELETE',
-        headers: {
-          Prefer: 'return=representation'
-        }
-      }
-    );
+    const result = await c.env.DB.prepare('DELETE FROM projects WHERE id = ?')
+      .bind(id)
+      .run();
+
+    if (!result.success) {
+      console.error('Failed to delete project', result);
+      return c.json({ error: 'Failed to delete project' }, 500);
+    }
+
+    if ((result.meta?.changes ?? 0) === 0) {
+      return c.json({ error: 'Project not found' }, 404);
+    }
+
+    return c.json({ ok: true });
   } catch (error) {
-    console.error('Failed to delete project in Supabase', error);
-    return c.json({ error: 'Failed to delete project' }, 502);
+    console.error('Failed to delete project', error);
+    return c.json({ error: 'Failed to delete project' }, 500);
   }
-
-  if (!response.ok) {
-    return respondWithSupabaseError(c, response);
-  }
-
-  const records = (await response.json()) as ProjectRecord[];
-  if (!records || records.length === 0) {
-    return c.json({ error: 'Project not found' }, 404);
-  }
-
-  return c.json({ ok: true });
 });
 
 export default projects;
