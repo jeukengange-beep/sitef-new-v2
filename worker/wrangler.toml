@@ -4,6 +4,7 @@ compatibility_date = "2024-06-20"
 
 [vars]
 ORIGIN = "https://<your-pages-project>.pages.dev"
+SUPABASE_URL = "https://<your-project>.supabase.co/rest/v1"
 
 [[d1_databases]]
 binding = "DB"
