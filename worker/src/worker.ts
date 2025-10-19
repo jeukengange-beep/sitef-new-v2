@@ -11,6 +11,14 @@ type OriginMatcher = {
   regex?: RegExp;
 };
 
+type CompletionPayload = {
+  choices?: Array<{
+    message?: {
+      content?: string;
+    };
+  }>;
+};
+
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const parseAllowedOrigins = (raw: string): OriginMatcher[] =>
@@ -78,6 +86,65 @@ app.use('*', async (c, next) => {
 });
 
 app.get('/health', (c) => c.json({ ok: true }));
+
+app.post('/ai/complete', async (c) => {
+  const apiKey = c.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return c.json({ error: 'AI integration not configured' }, 500);
+  }
+
+  let prompt: unknown;
+  let model: unknown;
+  try {
+    const body = await c.req.json();
+    prompt = body.prompt;
+    model = body.model;
+  } catch (error) {
+    console.error('Failed to parse AI request body', error);
+    return c.json({ error: 'Invalid JSON payload' }, 400);
+  }
+
+  if (typeof prompt !== 'string' || prompt.trim().length === 0) {
+    return c.json({ error: 'Prompt is required' }, 400);
+  }
+
+  const selectedModel =
+    typeof model === 'string' && model.trim().length > 0 ? model : 'gpt-4o-mini';
+
+  let completion: CompletionPayload | undefined;
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: selectedModel,
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const errorPayload = await response.text();
+      console.error('OpenAI error', response.status, errorPayload);
+      return c.json({ error: 'AI request failed' }, 502);
+    }
+
+    completion = (await response.json()) as CompletionPayload;
+  } catch (error) {
+    console.error('OpenAI request failed', error);
+    return c.json({ error: 'AI request failed' }, 502);
+  }
+  const text = completion?.choices?.[0]?.message?.content?.toString().trim() ?? '';
+
+  return c.json({ text });
+});
 
 app.route('/projects', projects);
 

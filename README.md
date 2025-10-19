@@ -37,6 +37,7 @@ npm install
 
    ```
    ORIGIN=http://localhost:5173
+   OPENAI_API_KEY=<votre-cle-openai>
    ```
 
 2. Terminal A – API Worker :
@@ -91,6 +92,12 @@ npm run migrate
    npm run deploy
    ```
 
+   Définissez la clé OpenAI sur Cloudflare :
+
+   ```bash
+   wrangler secret put OPENAI_API_KEY
+   ```
+
 4. **Déployer le frontend**
 
    - Dans Cloudflare Pages, créez un projet connecté au dossier `frontend`.
@@ -107,6 +114,7 @@ npm run migrate
 ## API
 
 - `GET /health` → `{ "ok": true }`
+- `POST /ai/complete` → `{ "text": "..." }` (body : `{ "prompt": "...", "model"?: "..." }`)
 - `GET /projects` → liste des projets
 - `POST /projects` → crée un projet `{ name, description? }`
 - `GET /projects/:id`
