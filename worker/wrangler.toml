@@ -1,0 +1,14 @@
+name = "sitefactory-api"
+main = "src/worker.ts"
+compatibility_date = "2024-06-20"
+
+[vars]
+ORIGIN = "https://<your-pages-project>.pages.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sitefactory"
+database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
+
+[dev]
+port = 8787
