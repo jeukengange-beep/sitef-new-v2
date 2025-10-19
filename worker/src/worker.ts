@@ -50,6 +50,32 @@ const findMatchingOrigin = (requestOrigin: string | null, allowed: OriginMatcher
   return null;
 };
 
+const parsePositiveInt = (value: string | undefined, fallback: number): number => {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+};
+
+const coerceNumber = (value: unknown, fallback: number): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return fallback;
+};
+
+const coerceString = (value: unknown): string => (typeof value === 'string' ? value : '');
+
 app.use('*', async (c, next) => {
   const requestOrigin = c.req.header('Origin');
   const allowedOrigins = parseAllowedOrigins(c.env.ORIGIN ?? '');
@@ -144,6 +170,87 @@ app.post('/ai/complete', async (c) => {
   const text = completion?.choices?.[0]?.message?.content?.toString().trim() ?? '';
 
   return c.json({ text });
+});
+
+app.get('/media/pexels', async (c) => {
+  const apiKey = c.env.PEXELS_API_KEY;
+  if (!apiKey) {
+    return c.json({ error: 'Pexels integration not configured' }, 500);
+  }
+
+  const query = c.req.query('query');
+  if (!query || query.trim().length === 0) {
+    return c.json({ error: 'query required' }, 400);
+  }
+
+  const page = parsePositiveInt(c.req.query('page'), 1);
+  const perPage = parsePositiveInt(c.req.query('per_page'), 10);
+
+  const url = new URL('https://api.pexels.com/v1/search');
+  url.searchParams.set('query', query.trim());
+  url.searchParams.set('page', String(page));
+  url.searchParams.set('per_page', String(perPage));
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      headers: {
+        Authorization: apiKey
+      }
+    });
+  } catch (error) {
+    console.error('Failed to reach Pexels API', error);
+    return c.json({ error: 'Failed to reach Pexels API' }, 502);
+  }
+
+  if (!response.ok) {
+    let message = `Pexels request failed (${response.status})`;
+    try {
+      const errorBody = await response.text();
+      if (errorBody) {
+        message = errorBody;
+      }
+    } catch (error) {
+      console.error('Failed to read Pexels error response', error);
+    }
+    console.error('Pexels responded with an error', response.status, message);
+    return c.json({ error: message }, 502);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    console.error('Failed to parse Pexels response', error);
+    return c.json({ error: 'Failed to parse Pexels response' }, 502);
+  }
+
+  const photos = Array.isArray((payload as { photos?: unknown }).photos)
+    ? ((payload as { photos: unknown[] }).photos).map((photo) => {
+        const record = photo as Record<string, unknown>;
+        const src = (record.src as Record<string, unknown>) ?? {};
+        return {
+          id: coerceNumber(record.id, 0),
+          photographer: coerceString(record.photographer),
+          url: coerceString(record.url),
+          src: {
+            original: coerceString(src.original),
+            large: coerceString(src.large),
+            medium: coerceString(src.medium),
+            small: coerceString(src.small)
+          }
+        };
+      })
+    : [];
+
+  const normalized = {
+    photos,
+    page: coerceNumber((payload as { page?: unknown }).page, page),
+    per_page: coerceNumber((payload as { per_page?: unknown }).per_page, perPage),
+    total_results: coerceNumber((payload as { total_results?: unknown }).total_results, photos.length)
+  };
+
+  return c.json(normalized);
 });
 
 app.route('/projects', projects);

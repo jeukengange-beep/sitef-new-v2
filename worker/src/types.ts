@@ -3,6 +3,7 @@ export type Bindings = {
   OPENAI_API_KEY?: string;
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  PEXELS_API_KEY?: string;
 };
 
 export type Env = {

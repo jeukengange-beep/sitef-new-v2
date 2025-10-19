@@ -41,6 +41,7 @@ npm install
    OPENAI_API_KEY=<votre-cle-openai>
    SUPABASE_URL=https://<votre-projet>.supabase.co/rest/v1
    SUPABASE_SERVICE_ROLE_KEY=<votre-cle-service-role>
+   PEXELS_API_KEY=<votre-cle-pexels>
    ```
 
 2. Terminal A – API Worker :
@@ -86,6 +87,7 @@ npm install
    cd worker
    wrangler secret put OPENAI_API_KEY
    wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+   wrangler secret put PEXELS_API_KEY
    ```
 
    Dans `worker/wrangler.toml`, remplissez `ORIGIN` et `SUPABASE_URL` avec les valeurs de production.
@@ -113,6 +115,7 @@ npm install
 
 - `GET /health` → `{ "ok": true }`
 - `POST /ai/complete` → `{ "text": "..." }` (body : `{ "prompt": "...", "model"?: "..." }`)
+- `GET /media/pexels?query=...&page?=&per_page?=` → recherche Pexels normalisée `{ photos: [...], page, per_page, total_results }`
 - `GET /projects` → liste des projets (Supabase `projects`)
 - `POST /projects` → crée un projet `{ name, description? }`
 - `GET /projects/:id`
